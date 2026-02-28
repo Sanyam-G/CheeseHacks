@@ -10,52 +10,41 @@ struct ContentView: View {
         ZStack {
             TabView {
                 ChatView()
-                    .tabItem {
-                        Label("Messages", systemImage: "message.fill")
-                    }
+                    .tabItem { Label("Messages", systemImage: "message.fill") }
 
                 SOSView()
-                    .tabItem {
-                        Label("SOS", systemImage: "sos")
-                    }
+                    .tabItem { Label("SOS", systemImage: "sos") }
+
+                ResourceView()
+                    .tabItem { Label("Resources", systemImage: "mappin.and.ellipse") }
 
                 MapView()
-                    .tabItem {
-                        Label("Map", systemImage: "map.fill")
-                    }
+                    .tabItem { Label("Map", systemImage: "map.fill") }
 
                 NetworkStatusView()
-                    .tabItem {
-                        Label("Network", systemImage: "antenna.radiowaves.left.and.right")
-                    }
+                    .tabItem { Label("Network", systemImage: "antenna.radiowaves.left.and.right") }
             }
             .tint(.red)
 
-            // SOS Alert Overlay
             if showingSOSOverlay, let alert = currentSOSAlert {
                 SOSAlertOverlay(alert: alert, isPresented: $showingSOSOverlay)
                     .transition(.opacity)
             }
         }
         .onChange(of: meshManager.sosAlerts) { oldAlerts, newAlerts in
-            // Check for new SOS alerts that aren't from us
             if let newAlert = newAlerts.last,
                newAlert.senderID != meshManager.deviceID,
                !oldAlerts.contains(where: { $0.id == newAlert.id }) {
                 currentSOSAlert = newAlert
-                showingSOSOverlay = true
+                withAnimation { showingSOSOverlay = true }
                 triggerSOSFeedback()
             }
         }
     }
 
     private func triggerSOSFeedback() {
-        // Haptic feedback
         let generator = UINotificationFeedbackGenerator()
         generator.notificationOccurred(.error)
-
-        // Play alert sound
-        // AudioServicesPlayAlertSound(SystemSoundID(1005))
     }
 }
 

@@ -6,7 +6,6 @@ import UIKit
 
 /// Core mesh networking manager using MultipeerConnectivity
 class MeshManager: NSObject, ObservableObject {
-    // Service type must be 1-15 chars, lowercase letters, numbers, hyphens
     private let serviceType = "safemesh"
 
     private var peerID: MCPeerID!
@@ -14,230 +13,206 @@ class MeshManager: NSObject, ObservableObject {
     private var advertiser: MCNearbyServiceAdvertiser!
     private var browser: MCNearbyServiceBrowser!
 
-    // Published properties for UI
     @Published var messages: [MeshMessage] = []
     @Published var sosAlerts: [SOSAlert] = []
     @Published var connectedPeers: [MCPeerID] = []
     @Published var peerLocations: [String: PeerInfo] = [:]
     @Published var relayedCount: Int = 0
     @Published var isRunning: Bool = false
+    @Published var deliveredMessageIDs: Set<UUID> = []
+    @Published var typingPeers: Set<String> = []
+    @Published var resourceBroadcasts: [ResourceBroadcast] = []
 
-    // Deduplication cache - critical for mesh to work
     private var seenMessageIDs: Set<UUID> = []
     private let seenIDsLock = NSLock()
+    private var reconnectTimer: Timer?
+    private var appLifecycleObservers: [NSObjectProtocol] = []
 
-    // Device info
-    var deviceName: String {
-        peerID?.displayName ?? UIDevice.current.name
-    }
-
-    var deviceID: String {
-        peerID?.displayName ?? UUID().uuidString
-    }
+    var deviceName: String { peerID?.displayName ?? UIDevice.current.name }
+    var deviceID: String { peerID?.displayName ?? UUID().uuidString }
 
     override init() {
         super.init()
         setupMesh()
+        setupAppLifecycleObservers()
+    }
+
+    deinit {
+        appLifecycleObservers.forEach { NotificationCenter.default.removeObserver($0) }
+        reconnectTimer?.invalidate()
     }
 
     private func setupMesh() {
-        // Create peer ID with device name
         peerID = MCPeerID(displayName: UIDevice.current.name)
-
-        // Create session
+        // Always create a FRESH session - reusing a dead session is the reconnection bug
         session = MCSession(peer: peerID, securityIdentity: nil, encryptionPreference: .none)
         session.delegate = self
-
-        // Create advertiser - makes this device discoverable
         advertiser = MCNearbyServiceAdvertiser(peer: peerID, discoveryInfo: nil, serviceType: serviceType)
         advertiser.delegate = self
-
-        // Create browser - discovers other devices
         browser = MCNearbyServiceBrowser(peer: peerID, serviceType: serviceType)
         browser.delegate = self
     }
 
-    /// Start advertising and browsing for peers
+    // Restart mesh when app comes back to foreground
+    private func setupAppLifecycleObservers() {
+        let fg = NotificationCenter.default.addObserver(
+            forName: UIApplication.willEnterForegroundNotification,
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            print("📱 Foregrounded - restarting mesh")
+            self?.restart()
+        }
+        appLifecycleObservers = [fg]
+    }
+
     func start() {
         advertiser.startAdvertisingPeer()
         browser.startBrowsingForPeers()
         isRunning = true
-        print("🟢 Mesh started - advertising and browsing")
+        // Cycle discovery every 15s if no peers found
+        reconnectTimer = Timer.scheduledTimer(withTimeInterval: 15.0, repeats: true) { [weak self] _ in
+            guard let self = self, self.isRunning, self.connectedPeers.isEmpty else { return }
+            print("🔄 No peers, cycling discovery")
+            self.cycleDiscovery()
+        }
+        print("🟢 Mesh started")
     }
 
-    /// Stop the mesh
     func stop() {
+        reconnectTimer?.invalidate()
+        reconnectTimer = nil
         advertiser.stopAdvertisingPeer()
         browser.stopBrowsingForPeers()
         session.disconnect()
         isRunning = false
-        print("🔴 Mesh stopped")
     }
 
-    // MARK: - Sending Messages
-
-    /// Send a text message to the mesh
-    func sendMessage(_ content: String) {
-        let message = MeshMessage(
-            senderID: deviceID,
-            senderName: deviceName,
-            content: content
-        )
-
-        // Add to our own messages
-        DispatchQueue.main.async {
-            self.messages.append(message)
+    // Full restart: creates fresh session - fixes the won't-reconnect bug
+    func restart() {
+        stop()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            self?.setupMesh()
+            self?.start()
         }
+    }
 
-        // Mark as seen so we don't process our own message
+    private func cycleDiscovery() {
+        browser.stopBrowsingForPeers()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            self?.browser.startBrowsingForPeers()
+        }
+    }
+
+    // MARK: - Public API
+
+    func sendMessage(_ content: String) {
+        let message = MeshMessage(senderID: deviceID, senderName: deviceName, content: content)
+        DispatchQueue.main.async { self.messages.append(message) }
         markSeen(message.id)
-
-        // Broadcast to all peers
         broadcast(.message(message))
     }
 
-    /// Send an SOS alert
     func sendSOS(coordinate: CLLocationCoordinate2D, type: EmergencyType, medicalInfo: String? = nil) {
-        let alert = SOSAlert(
-            senderID: deviceID,
-            senderName: deviceName,
-            coordinate: coordinate,
-            emergencyType: type,
-            medicalInfo: medicalInfo
-        )
-
-        // Add to our own alerts
-        DispatchQueue.main.async {
-            self.sosAlerts.append(alert)
-        }
-
-        // Mark as seen
+        let alert = SOSAlert(senderID: deviceID, senderName: deviceName, coordinate: coordinate, emergencyType: type, medicalInfo: medicalInfo)
+        DispatchQueue.main.async { self.sosAlerts.append(alert) }
         markSeen(alert.id)
-
-        // Broadcast with priority
         broadcast(.sos(alert))
-
-        print("🆘 SOS SENT: \(type.rawValue) at \(coordinate.latitude), \(coordinate.longitude)")
     }
 
-    /// Broadcast peer location info
     func broadcastLocation(_ coordinate: CLLocationCoordinate2D) {
-        let info = PeerInfo(
-            id: UUID(),
-            peerID: deviceID,
-            displayName: deviceName,
-            latitude: coordinate.latitude,
-            longitude: coordinate.longitude,
-            timestamp: Date()
-        )
+        let info = PeerInfo(id: UUID(), peerID: deviceID, displayName: deviceName, latitude: coordinate.latitude, longitude: coordinate.longitude, timestamp: Date())
         broadcast(.ping(info))
     }
 
-    // MARK: - Private Methods
+    func sendTypingIndicator() {
+        broadcast(.typing(deviceName))
+    }
+
+    func sendResourceBroadcast(_ resource: ResourceBroadcast) {
+        DispatchQueue.main.async { self.resourceBroadcasts.append(resource) }
+        markSeen(resource.id)
+        broadcast(.resource(resource))
+    }
+
+    // MARK: - Private
 
     private func broadcast(_ packet: MeshPacket) {
-        guard !session.connectedPeers.isEmpty else {
-            print("⚠️ No connected peers to broadcast to")
-            return
-        }
-
+        guard !session.connectedPeers.isEmpty else { return }
         do {
             let data = try JSONEncoder().encode(packet)
             try session.send(data, toPeers: session.connectedPeers, with: .reliable)
-            print("📤 Broadcast to \(session.connectedPeers.count) peers")
         } catch {
             print("❌ Broadcast failed: \(error)")
         }
     }
 
     private func markSeen(_ id: UUID) {
-        seenIDsLock.lock()
-        seenMessageIDs.insert(id)
-        seenIDsLock.unlock()
+        seenIDsLock.lock(); seenMessageIDs.insert(id); seenIDsLock.unlock()
     }
 
     private func hasSeen(_ id: UUID) -> Bool {
-        seenIDsLock.lock()
-        let seen = seenMessageIDs.contains(id)
-        seenIDsLock.unlock()
-        return seen
+        seenIDsLock.lock(); let s = seenMessageIDs.contains(id); seenIDsLock.unlock(); return s
     }
 
-    /// Handle received packet - relay if needed
     private func handlePacket(_ packet: MeshPacket, from peerName: String) {
-        // Check deduplication
-        if hasSeen(packet.id) {
-            print("🔄 Skipping duplicate packet: \(packet.id)")
-            return
-        }
-
+        if hasSeen(packet.id) { return }
         markSeen(packet.id)
 
         switch packet {
-        case .message(var message):
-            // Add this hop to the path
-            message.hopPath.append(deviceName)
-
-            // Decrement TTL
-            message.ttl -= 1
-
-            DispatchQueue.main.async {
-                self.messages.append(message)
-            }
-
-            // Relay if TTL > 0
-            if message.ttl > 0 {
-                broadcast(.message(message))
-                DispatchQueue.main.async {
-                    self.relayedCount += 1
-                }
-                print("🔀 Relayed message, TTL: \(message.ttl), Path: \(message.hopPath.joined(separator: " → "))")
-            }
+        case .message(var msg):
+            msg.hopPath.append(deviceName)
+            msg.ttl -= 1
+            DispatchQueue.main.async { self.messages.append(msg) }
+            if msg.ttl > 0 { broadcast(.message(msg)); DispatchQueue.main.async { self.relayedCount += 1 } }
+            sendAck(messageID: msg.id, to: peerName)
 
         case .sos(var alert):
-            // Add this hop to the path
             alert.hopPath.append(deviceName)
-
-            // Decrement TTL
             alert.ttl -= 1
-
-            DispatchQueue.main.async {
-                self.sosAlerts.append(alert)
-            }
-
-            // Always relay SOS with remaining TTL
-            if alert.ttl > 0 {
-                broadcast(.sos(alert))
-                DispatchQueue.main.async {
-                    self.relayedCount += 1
-                }
-                print("🆘🔀 Relayed SOS, TTL: \(alert.ttl)")
-            }
+            DispatchQueue.main.async { self.sosAlerts.append(alert) }
+            if alert.ttl > 0 { broadcast(.sos(alert)); DispatchQueue.main.async { self.relayedCount += 1 } }
 
         case .ping(let info):
+            DispatchQueue.main.async { self.peerLocations[info.peerID] = info }
+
+        case .typing(let name):
             DispatchQueue.main.async {
-                self.peerLocations[info.peerID] = info
+                self.typingPeers.insert(name)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) { self.typingPeers.remove(name) }
             }
+
+        case .ack(let id):
+            DispatchQueue.main.async { self.deliveredMessageIDs.insert(id) }
+
+        case .resource(var r):
+            r.hopPath.append(deviceName)
+            r.ttl -= 1
+            DispatchQueue.main.async { self.resourceBroadcasts.append(r) }
+            if r.ttl > 0 { broadcast(.resource(r)) }
         }
+    }
+
+    private func sendAck(messageID: UUID, to peerName: String) {
+        guard let peer = session.connectedPeers.first(where: { $0.displayName == peerName }) else { return }
+        do {
+            let data = try JSONEncoder().encode(MeshPacket.ack(messageID))
+            try session.send(data, toPeers: [peer], with: .reliable)
+        } catch {}
     }
 }
 
 // MARK: - MCSessionDelegate
 extension MeshManager: MCSessionDelegate {
     func session(_ session: MCSession, peer peerID: MCPeerID, didChange state: MCSessionState) {
-        DispatchQueue.main.async {
-            self.connectedPeers = session.connectedPeers
-        }
-
+        DispatchQueue.main.async { self.connectedPeers = session.connectedPeers }
         switch state {
-        case .connected:
-            print("✅ Connected to: \(peerID.displayName)")
-        case .connecting:
-            print("🔄 Connecting to: \(peerID.displayName)")
+        case .connected: print("✅ Connected: \(peerID.displayName)")
+        case .connecting: print("🔄 Connecting: \(peerID.displayName)")
         case .notConnected:
-            print("❌ Disconnected from: \(peerID.displayName)")
-        @unknown default:
-            break
+            print("❌ Disconnected: \(peerID.displayName)")
+            // Cycle discovery to find them again
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in self?.cycleDiscovery() }
+        @unknown default: break
         }
     }
 
@@ -245,12 +220,9 @@ extension MeshManager: MCSessionDelegate {
         do {
             let packet = try JSONDecoder().decode(MeshPacket.self, from: data)
             handlePacket(packet, from: peerID.displayName)
-        } catch {
-            print("❌ Failed to decode packet: \(error)")
-        }
+        } catch { print("❌ Decode failed: \(error)") }
     }
 
-    // Required delegate methods (unused)
     func session(_ session: MCSession, didReceive stream: InputStream, withName streamName: String, fromPeer peerID: MCPeerID) {}
     func session(_ session: MCSession, didStartReceivingResourceWithName resourceName: String, fromPeer peerID: MCPeerID, with progress: Progress) {}
     func session(_ session: MCSession, didFinishReceivingResourceWithName resourceName: String, fromPeer peerID: MCPeerID, at localURL: URL?, withError error: Error?) {}
@@ -259,28 +231,24 @@ extension MeshManager: MCSessionDelegate {
 // MARK: - MCNearbyServiceAdvertiserDelegate
 extension MeshManager: MCNearbyServiceAdvertiserDelegate {
     func advertiser(_ advertiser: MCNearbyServiceAdvertiser, didReceiveInvitationFromPeer peerID: MCPeerID, withContext context: Data?, invitationHandler: @escaping (Bool, MCSession?) -> Void) {
-        // Auto-accept all invitations - this is a mesh, everyone connects
-        print("📨 Received invitation from: \(peerID.displayName) - auto-accepting")
         invitationHandler(true, session)
     }
-
     func advertiser(_ advertiser: MCNearbyServiceAdvertiser, didNotStartAdvertisingPeer error: Error) {
-        print("❌ Failed to start advertising: \(error)")
+        print("❌ Advertising failed: \(error)")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in self?.advertiser.startAdvertisingPeer() }
     }
 }
 
 // MARK: - MCNearbyServiceBrowserDelegate
 extension MeshManager: MCNearbyServiceBrowserDelegate {
     func browser(_ browser: MCNearbyServiceBrowser, foundPeer peerID: MCPeerID, withDiscoveryInfo info: [String: String]?) {
-        print("🔍 Found peer: \(peerID.displayName) - inviting")
         browser.invitePeer(peerID, to: session, withContext: nil, timeout: 10)
     }
-
     func browser(_ browser: MCNearbyServiceBrowser, lostPeer peerID: MCPeerID) {
-        print("👋 Lost peer: \(peerID.displayName)")
+        print("👋 Lost: \(peerID.displayName)")
     }
-
     func browser(_ browser: MCNearbyServiceBrowser, didNotStartBrowsingForPeers error: Error) {
-        print("❌ Failed to start browsing: \(error)")
+        print("❌ Browsing failed: \(error)")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in self?.browser.startBrowsingForPeers() }
     }
 }
