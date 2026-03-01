@@ -34,6 +34,9 @@ struct ChatView: View {
                 // Input bar
                 inputBar
             }
+            .onTapGesture {
+                isInputFocused = false
+            }
             .navigationTitle("SafeMesh")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -93,6 +96,7 @@ struct ChatView: View {
         guard !messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         meshManager.sendMessage(messageText)
         messageText = ""
+        isInputFocused = false
     }
 }
 

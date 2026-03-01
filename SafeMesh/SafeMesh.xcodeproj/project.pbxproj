@@ -18,6 +18,7 @@
 		A1000009 /* MeshManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000009 /* MeshManager.swift */; };
 		A1000010 /* LocationManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000010 /* LocationManager.swift */; };
 		A1000011 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A2000011 /* Assets.xcassets */; };
+		A1000012 /* ObjCExceptionCatcher.m in Sources */ = {isa = PBXBuildFile; fileRef = A2000014 /* ObjCExceptionCatcher.m */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -33,6 +34,9 @@
 		A2000010 /* LocationManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocationManager.swift; sourceTree = "<group>"; };
 		A2000011 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		A2000012 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		A2000013 /* ObjCExceptionCatcher.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = ObjCExceptionCatcher.h; sourceTree = "<group>"; };
+		A2000014 /* ObjCExceptionCatcher.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = ObjCExceptionCatcher.m; sourceTree = "<group>"; };
+		A2000015 /* SafeMesh-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "SafeMesh-Bridging-Header.h"; sourceTree = "<group>"; };
 		A3000001 /* SafeMesh.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SafeMesh.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -62,6 +66,9 @@
 				A5000003 /* Views */,
 				A5000004 /* Models */,
 				A5000005 /* Managers */,
+				A2000013 /* ObjCExceptionCatcher.h */,
+				A2000014 /* ObjCExceptionCatcher.m */,
+				A2000015 /* SafeMesh-Bridging-Header.h */,
 				A2000011 /* Assets.xcassets */,
 				A2000012 /* Info.plist */,
 			);
@@ -185,6 +192,7 @@
 				A1000008 /* Message.swift in Sources */,
 				A1000009 /* MeshManager.swift in Sources */,
 				A1000010 /* LocationManager.swift in Sources */,
+				A1000012 /* ObjCExceptionCatcher.m in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -216,6 +224,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.safemesh.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OBJC_BRIDGING_HEADER = "SafeMesh/SafeMesh-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -246,6 +255,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.safemesh.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OBJC_BRIDGING_HEADER = "SafeMesh/SafeMesh-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};

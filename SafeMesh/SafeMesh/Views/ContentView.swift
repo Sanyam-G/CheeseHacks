@@ -19,11 +19,6 @@ struct ContentView: View {
                         Label("SOS", systemImage: "sos")
                     }
 
-                MapView()
-                    .tabItem {
-                        Label("Map", systemImage: "map.fill")
-                    }
-
                 NetworkStatusView()
                     .tabItem {
                         Label("Network", systemImage: "antenna.radiowaves.left.and.right")
